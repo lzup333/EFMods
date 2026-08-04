@@ -1,0 +1,40 @@
+[info]
+name = "连锁挖矿"
+author = "lzup"
+version = "1.0.0"
+
+[github]
+open_source = true
+overview = "https://github.com/lzup333"
+url = "https://github.com/lzup333/EFMods/"
+
+[platform.windows]
+arm64 = false
+arm32 = false
+x86_64 = false
+x86 = false
+
+[platform.android]
+arm64 = true
+arm32 = false
+x86_64 = false
+x86 = false
+
+[introduce]
+zh-cn = "挖矿时自动连锁破坏相连的矿石与宝石脉（仅矿石/宝石，适配新版本1.4.5）"
+zh-hant = "挖礦時自動連鎖破壞相連的礦石與寶石脈（僅礦石/寶石，適配新版本1.4.5）"
+en = "Chain-mine connected ore and gem veins when digging (ores/gems only, adapted to 1.4.5)"
+ja = "採掘時に連結した鉱石・宝石の脈を連鎖破壊します（鉱石/宝石のみ、1.4.5対応）"
+ko = "채굴 시 연결된 광석·보석 광맥을 연쇄 파괴합니다 (광석/보석만, 1.4.5 대응)"
+de = "Beim Graben verbundene Erz- und Edelsteinadern kettenweise zerstören (nur Erze/Edelsteine, angepasst an 1.4.5)"
+fr = "Cassez en chaîne les veines de minerai et de gemmes connectées lors du creusement (minerais/gemmes uniquement, adapté à 1.4.5)"
+it = "Distruggi a catena le vene di minerale e gemme collegate durante lo scavo (solo minerali/gemme, adattato a 1.4.5)"
+es = "Rompe en cadena venas de mineral y gemas conectadas al excavar (solo minerales/gemas, adaptado a 1.4.5)"
+
+[[loaders]]
+name = "TEFModLoader-EternalFuture゙"
+supported_versions = ["2025-05-24"]
+
+[mod]
+standards = 20250517
+modx = false
