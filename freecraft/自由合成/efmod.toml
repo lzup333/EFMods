@@ -1,0 +1,40 @@
+[info]
+name = "自由合成"
+author = "lzup"
+version = "1.0.0"
+
+[github]
+open_source = true
+overview = "https://github.com/lzup333"
+url = "https://github.com/lzup333/EFMods/"
+
+[platform.windows]
+arm64 = false
+arm32 = false
+x86_64 = false
+x86 = false
+
+[platform.android]
+arm64 = true
+arm32 = false
+x86_64 = false
+x86 = false
+
+[introduce]
+zh-cn = "自由合成：无需对应材料、无需工作站，所有配方直接可用，且合成不消耗任何材料（适配 1.4.5）"
+zh-hant = "自由合成：無需對應材料、無需工作站，所有配方直接可用，且合成不消耗任何材料（適配 1.4.5）"
+en = "Free crafting: all recipes become available without materials or crafting stations, and crafting costs nothing (adapted to 1.4.5)"
+ja = "自由クラフト：対応する素材や作業台なしで全レシピが使用可能になり、クラフトでも素材を消費しません（1.4.5対応）"
+ko = "자유 조합: 재료나 작업대 없이 모든 레시피를 사용할 수 있고, 조합 시 재료를 소모하지 않습니다 (1.4.5 대응)"
+de = "Freies Handwerk: Alle Rezepte sind ohne Materialien und Werkbänke verfügbar, und das Handwerk verbraucht nichts (angepasst an 1.4.5)"
+fr = "Artisanat gratuit : toutes les recettes sont disponibles sans matériaux ni stations, et l'artisanat ne consomme rien (adapté à 1.4.5)"
+it = "Crafting gratuito: tutte le ricette sono disponibili senza materiali o banchi da lavoro, e il crafting non consuma nulla (adattato a 1.4.5)"
+es = "Artesanía gratuita: todas las recetas están disponibles sin materiales ni estaciones, y la artesanía no consume nada (adaptado a 1.4.5)"
+
+[[loaders]]
+name = "TEFModLoader-EternalFuture゙"
+supported_versions = ["2025-05-24"]
+
+[mod]
+standards = 20250517
+modx = false
