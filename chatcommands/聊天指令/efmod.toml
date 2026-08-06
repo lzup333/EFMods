@@ -1,0 +1,40 @@
+[info]
+name = "聊天指令"
+author = "lzup"
+version = "1.0.0"
+
+[github]
+open_source = true
+overview = "https://github.com/lzup333"
+url = "https://github.com/lzup333/EFMods/"
+
+[platform.windows]
+arm64 = false
+arm32 = false
+x86_64 = false
+x86 = false
+
+[platform.android]
+arm64 = true
+arm32 = false
+x86_64 = false
+x86 = false
+
+[introduce]
+zh-cn = "聊天指令助手：/get <物品ID> [数量] 给予物品，/sp <生物ID> [数量] 生成生物，/god 开关无敌模式（适配 1.4.5）"
+zh-hant = "聊天指令助手：/get <物品ID> [數量] 給予物品，/sp <生物ID> [數量] 生成生物，/god 開關無敵模式（適配 1.4.5）"
+en = "Chat command helper: /get <itemID> [count] to give items, /sp <npcID> [count] to spawn NPCs, /god to toggle invincibility (adapted to 1.4.5)"
+ja = "チャットコマンドヘルパー：/get <アイテムID> [個数] でアイテム入手、/sp <NPC ID> [個数] でNPC召喚、/god で無敵モード切替（1.4.5対応）"
+ko = "채팅 명령 도우미: /get <아이템ID> [개수] 아이템 지급, /sp <몹ID> [개수] 몹 소환, /god 무적 모드 토글 (1.4.5 대응)"
+de = "Chat-Befehlshelfer: /get <Gegenstands-ID> [Anzahl] Gegenstände geben, /sp <NPC-ID> [Anzahl] NPCs spawnen, /god Unverwundbarkeit umschalten (angepasst an 1.4.5)"
+fr = "Aide aux commandes de chat : /get <ID d'objet> [quantité] pour donner des objets, /sp <ID de PNJ> [quantité] pour faire apparaître des PNJ, /god pour activer/désactiver l'invincibilité (adapté à 1.4.5)"
+it = "Assistente comandi chat: /get <ID oggetto> [quantità] per dare oggetti, /sp <ID PNG> [quantità] per generare PNG, /god per attivare/disattivare l'invincibilità (adattato a 1.4.5)"
+es = "Asistente de comandos de chat: /get <ID de objeto> [cantidad] para dar objetos, /sp <ID de PNJ> [cantidad] para invocar PNJs, /god para activar/desactivar la invencibilidad (adaptado a 1.4.5)"
+
+[[loaders]]
+name = "TEFModLoader-EternalFuture゙"
+supported_versions = ["2025-05-24"]
+
+[mod]
+standards = 20250517
+modx = false
