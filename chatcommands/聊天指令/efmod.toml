@@ -1,7 +1,7 @@
 [info]
 name = "聊天指令"
 author = "lzup"
-version = "1.0.0"
+version = "1.2.0"
 
 [github]
 open_source = true
@@ -21,15 +21,15 @@ x86_64 = false
 x86 = false
 
 [introduce]
-zh-cn = "聊天指令助手：/get <物品ID> [数量] 给予物品，/sp <生物ID> [数量] 生成生物，/god 开关无敌模式（适配 1.4.5）"
-zh-hant = "聊天指令助手：/get <物品ID> [數量] 給予物品，/sp <生物ID> [數量] 生成生物，/god 開關無敵模式（適配 1.4.5）"
-en = "Chat command helper: /get <itemID> [count] to give items, /sp <npcID> [count] to spawn NPCs, /god to toggle invincibility (adapted to 1.4.5)"
-ja = "チャットコマンドヘルパー：/get <アイテムID> [個数] でアイテム入手、/sp <NPC ID> [個数] でNPC召喚、/god で無敵モード切替（1.4.5対応）"
-ko = "채팅 명령 도우미: /get <아이템ID> [개수] 아이템 지급, /sp <몹ID> [개수] 몹 소환, /god 무적 모드 토글 (1.4.5 대응)"
-de = "Chat-Befehlshelfer: /get <Gegenstands-ID> [Anzahl] Gegenstände geben, /sp <NPC-ID> [Anzahl] NPCs spawnen, /god Unverwundbarkeit umschalten (angepasst an 1.4.5)"
-fr = "Aide aux commandes de chat : /get <ID d'objet> [quantité] pour donner des objets, /sp <ID de PNJ> [quantité] pour faire apparaître des PNJ, /god pour activer/désactiver l'invincibilité (adapté à 1.4.5)"
-it = "Assistente comandi chat: /get <ID oggetto> [quantità] per dare oggetti, /sp <ID PNG> [quantità] per generare PNG, /god per attivare/disattivare l'invincibilità (adattato a 1.4.5)"
-es = "Asistente de comandos de chat: /get <ID de objeto> [cantidad] para dar objetos, /sp <ID de PNJ> [cantidad] para invocar PNJs, /god para activar/desactivar la invencibilidad (adaptado a 1.4.5)"
+zh-cn = "聊天指令助手：在游戏聊天框输入指令即可使用\n\n/get 或 /give <物品ID> [数量] 给予物品\n/sp <生物ID> [数量] 生成生物\n/god [on|off] 无敌模式\n/time <时:分> 设置时间\n/heal 满血满蓝\n/tp <x> <y> 传送\n/spawn 回出生点\n/buff <buffID> [秒数] 添加buff\n\n适配 Terraria 1.4.5 手机版"
+zh-hant = "聊天指令助手：在遊戲聊天框輸入指令即可使用\n\n/get 或 /give <物品ID> [數量] 給予物品\n/sp <生物ID> [數量] 生成生物\n/god [on|off] 無敵模式\n/time <時:分> 設置時間\n/heal 滿血滿藍\n/tp <x> <y> 傳送\n/spawn 回出生點\n/buff <buffID> [秒數] 添加buff\n\n適配 Terraria 1.4.5 手機版"
+en = "Chat command helper: type commands in the in-game chat\n\n/get or /give <itemID> [count] give items\n/sp <npcID> [count] spawn NPCs\n/god [on|off] invincibility\n/time <hh:mm> set the time\n/heal restore HP & mana\n/tp <x> <y> teleport\n/spawn return to spawn\n/buff <buffID> [seconds] apply a buff\n\nAdapted to Terraria 1.4.5 mobile"
+ja = "チャットコマンドヘルパー：ゲーム内チャットでコマンドを入力\n\n/get または /give <アイテムID> [個数] アイテム入手\n/sp <NPC ID> [個数] NPC召喚\n/god [on|off] 無敵モード\n/time <時:分> 時刻設定\n/heal 体力とマナ全回復\n/tp <x> <y> テレポート\n/spawn スポーン地点へ\n/buff <buffID> [秒] バフ付与\n\nTerraria 1.4.5 モバイル対応"
+ko = "채팅 명령 도우미: 게임 내 채팅에 명령어 입력\n\n/get 또는 /give <아이템ID> [개수] 아이템 지급\n/sp <몹ID> [개수] 몹 소환\n/god [on|off] 무적 모드\n/time <시:분> 시간 설정\n/heal 체력·마나 회복\n/tp <x> <y> 텔레포트\n/spawn 스폰 지점으로\n/buff <buffID> [초] 버프 적용\n\nTerraria 1.4.5 모바일 대응"
+de = "Chat-Befehlshelfer: Geben Sie Befehle im Spiel-Chat ein\n\n/get oder /give <Gegenstands-ID> [Anzahl] Gegenstände geben\n/sp <NPC-ID> [Anzahl] NPCs spawnen\n/god [on|off] Unverwundbarkeit\n/time <hh:mm> Zeit einstellen\n/heal HP & Mana wiederherstellen\n/tp <x> <y> teleportieren\n/spawn zum Spawnpunkt\n/buff <buffID> [Sekunden] Buff anwenden\n\nAngepasst an Terraria 1.4.5 Mobile"
+fr = "Aide aux commandes de chat : saisissez les commandes dans le chat du jeu\n\n/get ou /give <ID d'objet> [quantité] donner des objets\n/sp <ID de PNJ> [quantité] invoquer des PNJ\n/god [on|off] invincibilité\n/time <hh:mm> régler l'heure\n/heal restaurer PV et mana\n/tp <x> <y> se téléporter\n/spawn retour au point d'apparition\n/buff <buffID> [secondes] appliquer un buff\n\nAdapté à Terraria 1.4.5 mobile"
+it = "Assistente comandi chat: digita i comandi nella chat di gioco\n\n/get o /give <ID oggetto> [quantità] dare oggetti\n/sp <ID PNG> [quantità] generare PNG\n/god [on|off] invincibilità\n/time <hh:mm> impostare l'ora\n/heal ripristina vita e mana\n/tp <x> <y> teletrasporto\n/spawn torna allo spawn\n/buff <buffID> [secondi] applica un buff\n\nAdattato a Terraria 1.4.5 mobile"
+es = "Asistente de comandos de chat: escribe comandos en el chat del juego\n\n/get o /give <ID de objeto> [cantidad] dar objetos\n/sp <ID de PNJ> [cantidad] invocar PNJs\n/god [on|off] invencibilidad\n/time <hh:mm> ajustar la hora\n/heal restaurar vida y maná\n/tp <x> <y> teletransportarse\n/spawn volver al punto de aparición\n/buff <buffID> [segundos] aplicar un buff\n\nAdaptado a Terraria 1.4.5 móvil"
 
 [[loaders]]
 name = "TEFModLoader-EternalFuture゙"

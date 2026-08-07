@@ -6,6 +6,11 @@
 //   1. /get <物品ID> [数量]     生成对应物品并给予玩家(默认 1 个, 数量上限 9999, /give 同义)
 //   2. /sp  <生物ID> [数量]     在玩家脚下生成对应生物(默认 1 只, 数量上限 100)
 //   3. /god [on|off]            开关无敌模式(置 creativeGodMode, 免疫一切伤害)
+//   4. /time <时:分>            设置游戏内时间(如 /time 12:30, 24 小时制)
+//   5. /heal                    恢复全部生命与法力
+//   6. /tp <x> <y>              传送到指定方块坐标(如 /tp 100 500)
+//   7. /spawn                   传送回世界出生点
+//   8. /buff <buffID> [秒数]    给自己添加 buff(默认 300 秒)
 //
 // 实现要点(结合 PE 1.4.5.6.4 dump.cs 与 PC 1.4.5.6 源码):
 //   1. 聊天拦截: 单机(netMode==0)下玩家回车发送聊天时,
@@ -31,7 +36,7 @@
 //      旅途模式 GodmodePower 完全一致 —— Player.Hurt 返回 0(Player.cs:37595)、
 //      Player.KillMe 不执行(Player.cs:38199)、NPC 接触免伤(Player.cs:30863)。
 //      由于 ResetEffects 每帧会把它重置为 false(Player.cs:18607), 因此 Hook
-//      ResetEffects 每帧重新置位; PlayerFrame 锁血保留作备份保险。
+//      ResetEffects 每帧重新置位。
 //   6. 聊天反馈: 通过 ResolveGameSymbol 解析 il2cpp_string_new 创建 C# 字符串,
 //      调用 Main.NewText 显示(libil2cpp 为 RTLD_LOCAL 加载, 需按 SONAME 重新
 //      dlopen 拿句柄); 若符号不可用则仅写日志, 不影响指令执行。
@@ -60,6 +65,7 @@ TEFMod::TEFModAPI* g_api = nullptr;
 // ============ 解析器 ============
 static TEFMod::Field<int>*    (*g_parseIntField)(void*);
 static TEFMod::Field<bool>*   (*g_parseBoolField)(void*);
+static TEFMod::Field<double>* (*g_parseDoubleField)(void*);
 static TEFMod::Field<void*>*  (*g_parseObjField)(void*);
 static TEFMod::Array<void*>*  (*g_parseObjArray)(void*);
 static TEFMod::Method<int>*   (*g_parseIntMethod)(void*);
@@ -68,26 +74,30 @@ static TEFMod::Method<void>*  (*g_parseVoidMethod)(void*);
 // ============ 字段 ============
 static TEFMod::Field<int>*    g_fStatLife;      // Player.statLife       (int)
 static TEFMod::Field<int>*    g_fStatLifeMax;   // Player.statLifeMax    (int)
+static TEFMod::Field<int>*    g_fStatMana;      // Player.statMana       (int)
+static TEFMod::Field<int>*    g_fStatManaMax;   // Player.statManaMax    (int)
 static TEFMod::Field<void*>*  g_fMainPlayer;    // Main.player           (Player[], 静态)
-static TEFMod::Field<int>*    g_fWhoAmI;        // Entity.whoAmI         (int)
 static TEFMod::Field<bool>*   g_fCreativeGod;   // Player.creativeGodMode(bool, 旅途模式无敌)
+static TEFMod::Field<bool>*   g_fDayTime;       // Main.dayTime          (bool, 静态)
+static TEFMod::Field<double>* g_fTime;          // Main.time             (double, 静态)
 
 // ============ 方法 ============
 static TEFMod::Method<int>*   g_mGetMyPlayer;   // Main.get_myPlayer     (static int)
 static TEFMod::Method<int>*   g_mNewItem;       // Item.NewItem          (static int, 10 参)
 static TEFMod::Method<int>*   g_mNewNPC;        // NPC.NewNPC            (static int, 10 参)
 static TEFMod::Method<void>*  g_mNewText;       // Main.NewText          (static void, 4 参)
+static TEFMod::Method<void>*  g_mAddBuff;       // Player.AddBuff        (void, 3 参)
+static TEFMod::Method<int>*   g_mGetSpawnX;     // Main.get_spawnTileX   (static int)
+static TEFMod::Method<int>*   g_mGetSpawnY;     // Main.get_spawnTileY   (static int)
 
 // ============ 原版函数 ============
 static void (*g_original_ProcessIncomingMessage)(TEFMod::TerrariaInstance, TEFMod::TerrariaInstance, int);
 static void (*g_original_SendChatMessageFromClient)(TEFMod::TerrariaInstance);
-static void (*g_original_PlayerFrame)(TEFMod::TerrariaInstance);
 static void (*g_original_ResetEffects)(TEFMod::TerrariaInstance);
 
 // ============ Hook 模板 ============
 void ProcessIncomingMessage_T(TEFMod::TerrariaInstance processor, TEFMod::TerrariaInstance message, int clientId);
 void SendChatMessageFromClient_T(TEFMod::TerrariaInstance message);
-void PlayerFrame_T(TEFMod::TerrariaInstance player);
 void ResetEffects_T(TEFMod::TerrariaInstance player);
 
 inline TEFMod::HookTemplate g_hookProcessIncoming {
@@ -100,11 +110,6 @@ inline TEFMod::HookTemplate g_hookSendChatFromClient {
         {}
 };
 
-inline TEFMod::HookTemplate g_hookPlayerFrame {
-        reinterpret_cast<void*>(PlayerFrame_T),
-        {}
-};
-
 inline TEFMod::HookTemplate g_hookResetEffects {
         reinterpret_cast<void*>(ResetEffects_T),
         {}
@@ -114,14 +119,12 @@ inline TEFMod::HookTemplate g_hookResetEffects {
 static bool g_godMode = false;      // 无敌模式开关
 
 // ============ 对象内偏移 (PE 1.4.5.6.4 dump.cs) ============
-// Entity:        whoAmI 0x10 | position(Vector2=2float) 0x14 | width 0x3C | height 0x40
-static constexpr std::size_t kWhoAmIOffset   = 0x10;
+// Entity:        position(Vector2=2float) 0x14 | width 0x3C | height 0x40
 static constexpr std::size_t kPosOffset      = 0x14;
 static constexpr std::size_t kWidthOffset    = 0x3C;
 static constexpr std::size_t kHeightOffset   = 0x40;
-// ChatMessage:   <Text>k__BackingField 0x18 (string) | <IsConsumed> 0x20 (bool)
+// ChatMessage:   <Text>k__BackingField 0x18 (string)
 static constexpr std::size_t kMsgTextOffset  = 0x18;
-static constexpr std::size_t kMsgConsumed    = 0x20;
 // System.String: length 0x10 (int) | chars 0x14 (char16[])
 static constexpr std::size_t kStrLenOffset   = 0x10;
 static constexpr std::size_t kStrCharOffset  = 0x14;
@@ -138,13 +141,6 @@ void SendChatMessageFromClient_T(TEFMod::TerrariaInstance message) {
     if (g_original_SendChatMessageFromClient) g_original_SendChatMessageFromClient(message);
     for (const auto fun : g_hookSendChatFromClient.FunctionArray) {
         if (fun) reinterpret_cast<void(*)(TEFMod::TerrariaInstance)>(fun)(message);
-    }
-}
-
-void PlayerFrame_T(TEFMod::TerrariaInstance player) {
-    if (g_original_PlayerFrame) g_original_PlayerFrame(player);
-    for (const auto fun : g_hookPlayerFrame.FunctionArray) {
-        if (fun) reinterpret_cast<void(*)(TEFMod::TerrariaInstance)>(fun)(player);
     }
 }
 
@@ -218,18 +214,16 @@ static void* CreateGameString(const char* utf8) {
     static void* (*il2cpp_string_new_fn)(const char*) = nullptr;
     if (!il2cpp_string_new_fn) {
         il2cpp_string_new_fn = reinterpret_cast<void*(*)(const char*)>(ResolveGameSymbol("il2cpp_string_new"));
-        if (g_log) g_log->i("ChatCommands", "il2cpp_string_new=", (void*)il2cpp_string_new_fn);
     }
     return il2cpp_string_new_fn ? il2cpp_string_new_fn(utf8) : nullptr;
 }
 
-/** 在聊天框显示一行文字(尽力而为, 失败仅降级为日志) */
+/** 在聊天框显示一行文字(尽力而为, 失败仅降级为无反馈) */
 static void ShowChat(const char* text) {
     if (!g_mNewText) return;
     void* s = CreateGameString(text);
     if (!s) return;
     g_mNewText->Call(nullptr, 4, s, 255, 255, 255);
-    if (g_log) g_log->i("ChatCommands", text);
 }
 
 /** 获取本地玩家实例; 失败返回 nullptr */
@@ -269,6 +263,15 @@ static std::string TrimLeft(const std::string& s) {
     return p == std::string::npos ? std::string() : s.substr(p);
 }
 
+/** 判断聊天文本是否为本 Mod 的指令 */
+static bool IsModCommand(const std::string& t) {
+    return t.rfind("/get", 0) == 0 || t.rfind("/give", 0) == 0 ||
+           t.rfind("/sp", 0) == 0 || t.rfind("/god", 0) == 0 ||
+           t.rfind("/time", 0) == 0 || t.rfind("/heal", 0) == 0 ||
+           t.rfind("/tp", 0) == 0 || t.rfind("/spawn", 0) == 0 ||
+           t.rfind("/buff", 0) == 0;
+}
+
 /**
  * 处理一条本地玩家的聊天指令
  * @param raw 玩家输入的原始文本(如 "/get 5 99")
@@ -300,10 +303,10 @@ static void HandleCommand(const std::string& raw) {
         PlayerGeo geo;
         if (!PlayerGeometry(LocalPlayer(), geo)) return;
         // NewItem(source=null, X, Y, Width, Height, Type, Stack, noBroadcast, pfix, noGrabDelay)
-        const int idx = g_mNewItem->Call(nullptr, 10, 0, geo.x, geo.y, geo.w, geo.h,
-                                         static_cast<int>(id), stack, 0, 0, 0);
+        g_mNewItem->Call(nullptr, 10, 0, geo.x, geo.y, geo.w, geo.h,
+                         static_cast<int>(id), stack, 0, 0, 0);
         char buf[96];
-        std::snprintf(buf, sizeof(buf), "[指令助手] 已给予物品 %ld x %d (slot=%d)", id, stack, idx);
+        std::snprintf(buf, sizeof(buf), "[指令助手] 已给予物品 %ld x %d", id, stack);
         ShowChat(buf);
         return;
     }
@@ -336,8 +339,6 @@ static void HandleCommand(const std::string& raw) {
 
         const int bx = geo.x + geo.w / 2;
         const int by = geo.y + geo.h;
-        if (g_log) g_log->i("ChatCommands", "spawn: id=", (int)id, " count=", count,
-                            " bx=", bx, " by=", by);
 
         // NewNPC(source=null, X, Y, Type, Start, ai0..3, Target)
         // 注意: ai0-3 是 float, C varargs 中 float 提升为 double, 必须传 0.0(此前传 int 0
@@ -347,9 +348,8 @@ static void HandleCommand(const std::string& raw) {
         for (int i = 0; i < count; ++i) {
             const int sx = bx + (i % 8) * 24 - 84;
             const int sy = by + (i / 8) * 24;
-            const int slot = g_mNewNPC->Call(nullptr, 10, 0, sx, sy, static_cast<int>(id), 0,
-                                              0.0, 0.0, 0.0, 0.0, 255);
-            if (g_log) g_log->i("ChatCommands", "  NewNPC[", i, "] -> slot=", slot);
+            g_mNewNPC->Call(nullptr, 10, 0, sx, sy, static_cast<int>(id), 0,
+                            0.0, 0.0, 0.0, 0.0, 255);
         }
         char buf[96];
         std::snprintf(buf, sizeof(buf), "[指令助手] 已生成生物 %ld x %d", id, count);
@@ -369,6 +369,144 @@ static void HandleCommand(const std::string& raw) {
         ShowChat(g_godMode ? "[指令助手] 无敌模式已开启" : "[指令助手] 无敌模式已关闭");
         return;
     }
+
+    if (raw.rfind("/time", 0) == 0) {
+        const std::string rest = TrimLeft(raw.substr(5));
+        if (rest.empty()) {
+            ShowChat("[指令助手] 用法: /time <时:分>, 例如 /time 12:30");
+            return;
+        }
+        // 解析 HH:MM(时 0-23, 分 0-59)
+        char* end = nullptr;
+        const long hour = std::strtol(rest.c_str(), &end, 10);
+        if (end == rest.c_str() || *end != ':') {
+            ShowChat("[指令助手] 无效的时间, 用法: /time 12:30");
+            return;
+        }
+        const long minute = std::strtol(end + 1, nullptr, 10);
+        if (hour < 0 || hour > 23 || minute < 0 || minute > 59) {
+            ShowChat("[指令助手] 无效的时间(时 0-23, 分 0-59)");
+            return;
+        }
+        if (!g_fTime || !g_fDayTime) {
+            ShowChat("[指令助手] 时间字段解析失败");
+            return;
+        }
+        // 泰拉瑞亚时间: dayLength=54000 单位 = 白天/夜晚各 12 小时
+        //  -> 1 分钟 = 75 单位, 1 小时 = 4500 单位
+        // 白天从 4:30(270 分钟)起, 夜晚从 16:30(990 分钟)起
+        const int minOfDay = static_cast<int>(hour * 60 + minute);
+        bool isDay;
+        double t;
+        if (minOfDay >= 270 && minOfDay < 990) {        // 4:30 ~ 16:29 = 白天
+            isDay = true;
+            t = static_cast<double>(minOfDay - 270) * 75.0;
+        } else {                                         // 其余 = 夜晚
+            isDay = false;
+            const int nightMin = (minOfDay >= 990) ? (minOfDay - 990) : (minOfDay + 1440 - 990);
+            t = static_cast<double>(nightMin) * 75.0;
+        }
+        g_fDayTime->Set(isDay);
+        g_fTime->Set(t);
+
+        char buf[96];
+        std::snprintf(buf, sizeof(buf), "[指令助手] 时间已设置为 %02ld:%02ld", hour, minute);
+        ShowChat(buf);
+        return;
+    }
+
+    if (raw.rfind("/heal", 0) == 0) {
+        TEFMod::TerrariaInstance p = LocalPlayer();
+        if (!p) return;
+        if (!g_fStatLife || !g_fStatLifeMax || !g_fStatMana || !g_fStatManaMax) {
+            ShowChat("[指令助手] 生命/法力字段解析失败");
+            return;
+        }
+        g_fStatLife->Set(g_fStatLifeMax->Get(p), p);
+        g_fStatMana->Set(g_fStatManaMax->Get(p), p);
+        ShowChat("[指令助手] 已恢复全部生命与法力");
+        return;
+    }
+
+    if (raw.rfind("/tp", 0) == 0) {
+        // /tp <x> <y>  传送到指定方块坐标
+        const std::string rest = TrimLeft(raw.substr(3));
+        char* end = nullptr;
+        const long x = std::strtol(rest.c_str(), &end, 10);
+        if (end == rest.c_str()) {
+            ShowChat("[指令助手] 用法: /tp <x> <y>(方块坐标)");
+            return;
+        }
+        const long y = std::strtol(end, nullptr, 10);
+        if (x < 0 || y < 0 || x > 200000 || y > 100000) {
+            ShowChat("[指令助手] 无效坐标");
+            return;
+        }
+        TEFMod::TerrariaInstance p = LocalPlayer();
+        if (!p) return;
+        // Player.position(Entity 偏移 0x14, 2 个 float)直接写入, velocity(0x1C)清零
+        float* pos = reinterpret_cast<float*>(reinterpret_cast<char*>(p) + kPosOffset);
+        float* vel = reinterpret_cast<float*>(reinterpret_cast<char*>(p) + kPosOffset + 8);
+        pos[0] = static_cast<float>(x) * 16.0f;
+        pos[1] = static_cast<float>(y) * 16.0f;
+        vel[0] = 0.0f;
+        vel[1] = 0.0f;
+        char buf[96];
+        std::snprintf(buf, sizeof(buf), "[指令助手] 已传送到 (%ld, %ld)", x, y);
+        ShowChat(buf);
+        return;
+    }
+
+    if (raw.rfind("/spawn", 0) == 0) {
+        if (!g_mGetSpawnX || !g_mGetSpawnY) {
+            ShowChat("[指令助手] 出生点字段解析失败");
+            return;
+        }
+        TEFMod::TerrariaInstance p = LocalPlayer();
+        if (!p) return;
+        const int sx = g_mGetSpawnX->Call(nullptr, 0);
+        const int sy = g_mGetSpawnY->Call(nullptr, 0);
+        float* pos = reinterpret_cast<float*>(reinterpret_cast<char*>(p) + kPosOffset);
+        float* vel = reinterpret_cast<float*>(reinterpret_cast<char*>(p) + kPosOffset + 8);
+        pos[0] = static_cast<float>(sx) * 16.0f;
+        pos[1] = static_cast<float>(sy) * 16.0f;
+        vel[0] = 0.0f;
+        vel[1] = 0.0f;
+        ShowChat("[指令助手] 已传送回出生点");
+        return;
+    }
+
+    if (raw.rfind("/buff", 0) == 0) {
+        // /buff <buffID> [秒数]  默认 300 秒
+        const std::string rest = TrimLeft(raw.substr(5));
+        if (rest.empty()) {
+            ShowChat("[指令助手] 用法: /buff <buffID> [秒数]");
+            return;
+        }
+        char* end = nullptr;
+        const long id = std::strtol(rest.c_str(), &end, 10);
+        if (end == rest.c_str() || id < 0 || id >= 100000) {
+            ShowChat("[指令助手] 无效的buffID");
+            return;
+        }
+        long seconds = 300;
+        if (end && *end != '\0') {
+            const long s = std::strtol(end, nullptr, 10);
+            if (s >= 1 && s <= 36000) seconds = s;
+        }
+        if (!g_mAddBuff) {
+            ShowChat("[指令助手] Player.AddBuff 解析失败");
+            return;
+        }
+        TEFMod::TerrariaInstance p = LocalPlayer();
+        if (!p) return;
+        // AddBuff(type, time, fromNetPvP=false), 时间单位为帧(60帧=1秒)
+        g_mAddBuff->Call(p, 3, static_cast<int>(id), static_cast<int>(seconds * 60), 0);
+        char buf[96];
+        std::snprintf(buf, sizeof(buf), "[指令助手] 已添加buff %ld (%ld 秒)", id, seconds);
+        ShowChat(buf);
+        return;
+    }
 }
 
 /** Hook: 单机聊天消息处理 */
@@ -382,14 +520,8 @@ void Hook_ProcessIncomingMessage(TEFMod::TerrariaInstance processor,
             *reinterpret_cast<void**>(reinterpret_cast<char*>(message) + kMsgTextOffset));
     if (text.empty()) return;
 
-    if (g_log) g_log->i("ChatCommands", "msg[", clientId, "]=", text);
-
-    if (text.rfind("/get", 0) == 0 || text.rfind("/give", 0) == 0 ||
-        text.rfind("/sp", 0) == 0 || text.rfind("/god", 0) == 0) {
+    if (IsModCommand(text)) {
         HandleCommand(text);
-        // post-hook 无法阻止原版默认命令先回显, 但置位无副作用
-        bool* consumed = reinterpret_cast<bool*>(reinterpret_cast<char*>(message) + kMsgConsumed);
-        *consumed = true;
     }
 }
 
@@ -399,21 +531,9 @@ void Hook_SendChatMessageFromClient(TEFMod::TerrariaInstance message) {
     const std::string text = ReadCSharpString(
             *reinterpret_cast<void**>(reinterpret_cast<char*>(message) + kMsgTextOffset));
     if (text.empty()) return;
-    if (text.rfind("/get", 0) == 0 || text.rfind("/give", 0) == 0 ||
-        text.rfind("/sp", 0) == 0 || text.rfind("/god", 0) == 0) {
+    if (IsModCommand(text)) {
         HandleCommand(text);
     }
-}
-
-/** Hook: 每帧锁定血量(备份保险, 正常情况下 creativeGodMode 已免疫所有伤害) */
-void Hook_PlayerFrame(TEFMod::TerrariaInstance player) {
-    if (!g_godMode) return;
-    if (!g_fStatLife || !g_fStatLifeMax) return;
-    if (g_fWhoAmI) {
-        const int my = g_mGetMyPlayer ? g_mGetMyPlayer->Call(nullptr, 0) : -1;
-        if (my >= 0 && g_fWhoAmI->Get(player) != my) return;   // 只锁本地玩家
-    }
-    g_fStatLife->Set(g_fStatLifeMax->Get(player), player);
 }
 
 /**
@@ -465,10 +585,6 @@ public:
                 &g_hookSendChatFromClient, { reinterpret_cast<void*>(Hook_SendChatMessageFromClient) }
         });
         g_api->registerFunctionDescriptor({
-                "Terraria", "Player", "PlayerFrame", "hook>>void", 0,
-                &g_hookPlayerFrame, { reinterpret_cast<void*>(Hook_PlayerFrame) }
-        });
-        g_api->registerFunctionDescriptor({
                 "Terraria", "Player", "ResetEffects", "hook>>void", 0,
                 &g_hookResetEffects, { reinterpret_cast<void*>(Hook_ResetEffects) }
         });
@@ -476,15 +592,21 @@ public:
         // 字段
         g_api->registerApiDescriptor({"Terraria", "Player", "statLife", "Field"});
         g_api->registerApiDescriptor({"Terraria", "Player", "statLifeMax", "Field"});
+        g_api->registerApiDescriptor({"Terraria", "Player", "statMana", "Field"});
+        g_api->registerApiDescriptor({"Terraria", "Player", "statManaMax", "Field"});
         g_api->registerApiDescriptor({"Terraria", "Main", "player", "Field"});
-        g_api->registerApiDescriptor({"Terraria", "Entity", "whoAmI", "Field"});
         g_api->registerApiDescriptor({"Terraria", "Player", "creativeGodMode", "Field"});
+        g_api->registerApiDescriptor({"Terraria", "Main", "dayTime", "Field"});
+        g_api->registerApiDescriptor({"Terraria", "Main", "time", "Field"});
 
         // 方法
         g_api->registerApiDescriptor({"Terraria", "Main", "get_myPlayer", "Method", 0});
         g_api->registerApiDescriptor({"Terraria", "Item", "NewItem", "Method", 10});
         g_api->registerApiDescriptor({"Terraria", "NPC", "NewNPC", "Method", 10});
         g_api->registerApiDescriptor({"Terraria", "Main", "NewText", "Method", 4});
+        g_api->registerApiDescriptor({"Terraria", "Player", "AddBuff", "Method", 3});
+        g_api->registerApiDescriptor({"Terraria", "Main", "get_spawnTileX", "Method", 0});
+        g_api->registerApiDescriptor({"Terraria", "Main", "get_spawnTileY", "Method", 0});
     }
 
     void Receive(const std::string &path, MultiChannel* channel) override {
@@ -493,6 +615,8 @@ public:
                 "TEFMod::Field<Int>::ParseFromPointer");
         g_parseBoolField = channel->receive<TEFMod::Field<bool>*(*)(void*)>(
                 "TEFMod::Field<Bool>::ParseFromPointer");
+        g_parseDoubleField = channel->receive<TEFMod::Field<double>*(*)(void*)>(
+                "TEFMod::Field<Double>::ParseFromPointer");
         g_parseObjField = channel->receive<TEFMod::Field<void*>*(*)(void*)>(
                 "TEFMod::Field<Other>::ParseFromPointer");
         g_parseObjArray = channel->receive<TEFMod::Array<void*>*(*)(void*)>(
@@ -509,9 +633,6 @@ public:
         g_original_SendChatMessageFromClient = g_api->GetAPI<void(*)(TEFMod::TerrariaInstance)>({
                 "Terraria.Chat", "ChatHelper", "SendChatMessageFromClient", "old_fun", 1
         });
-        g_original_PlayerFrame = g_api->GetAPI<void(*)(TEFMod::TerrariaInstance)>({
-                "Terraria", "Player", "PlayerFrame", "old_fun", 0
-        });
         g_original_ResetEffects = g_api->GetAPI<void(*)(TEFMod::TerrariaInstance)>({
                 "Terraria", "Player", "ResetEffects", "old_fun", 0
         });
@@ -519,31 +640,21 @@ public:
         // 字段
         g_fStatLife = g_parseIntField ? g_parseIntField(g_api->GetAPI<void*>({"Terraria", "Player", "statLife", "Field"})) : nullptr;
         g_fStatLifeMax = g_parseIntField ? g_parseIntField(g_api->GetAPI<void*>({"Terraria", "Player", "statLifeMax", "Field"})) : nullptr;
+        g_fStatMana = g_parseIntField ? g_parseIntField(g_api->GetAPI<void*>({"Terraria", "Player", "statMana", "Field"})) : nullptr;
+        g_fStatManaMax = g_parseIntField ? g_parseIntField(g_api->GetAPI<void*>({"Terraria", "Player", "statManaMax", "Field"})) : nullptr;
         g_fMainPlayer = g_parseObjField ? g_parseObjField(g_api->GetAPI<void*>({"Terraria", "Main", "player", "Field"})) : nullptr;
-        g_fWhoAmI = g_parseIntField ? g_parseIntField(g_api->GetAPI<void*>({"Terraria", "Entity", "whoAmI", "Field"})) : nullptr;
         g_fCreativeGod = g_parseBoolField ? g_parseBoolField(g_api->GetAPI<void*>({"Terraria", "Player", "creativeGodMode", "Field"})) : nullptr;
+        g_fDayTime = g_parseBoolField ? g_parseBoolField(g_api->GetAPI<void*>({"Terraria", "Main", "dayTime", "Field"})) : nullptr;
+        g_fTime = g_parseDoubleField ? g_parseDoubleField(g_api->GetAPI<void*>({"Terraria", "Main", "time", "Field"})) : nullptr;
 
         // 方法
         g_mGetMyPlayer = g_parseIntMethod ? g_parseIntMethod(g_api->GetAPI<void*>({"Terraria", "Main", "get_myPlayer", "Method", 0})) : nullptr;
         g_mNewItem = g_parseIntMethod ? g_parseIntMethod(g_api->GetAPI<void*>({"Terraria", "Item", "NewItem", "Method", 10})) : nullptr;
         g_mNewNPC = g_parseIntMethod ? g_parseIntMethod(g_api->GetAPI<void*>({"Terraria", "NPC", "NewNPC", "Method", 10})) : nullptr;
         g_mNewText = g_parseVoidMethod ? g_parseVoidMethod(g_api->GetAPI<void*>({"Terraria", "Main", "NewText", "Method", 4})) : nullptr;
-
-        if (g_log) {
-            g_log->i("ChatCommands", "hooks: processIn=", (void*)g_original_ProcessIncomingMessage,
-                     " sendChat=", (void*)g_original_SendChatMessageFromClient,
-                     " frame=", (void*)g_original_PlayerFrame,
-                     " resetFx=", (void*)g_original_ResetEffects);
-            g_log->i("ChatCommands", "fields: statLife=", (void*)g_fStatLife,
-                     " statLifeMax=", (void*)g_fStatLifeMax,
-                     " mainPlayer=", (void*)g_fMainPlayer,
-                     " whoAmI=", (void*)g_fWhoAmI,
-                     " creativeGod=", (void*)g_fCreativeGod);
-            g_log->i("ChatCommands", "methods: myPlayer=", (void*)g_mGetMyPlayer,
-                     " newItem=", (void*)g_mNewItem,
-                     " newNPC=", (void*)g_mNewNPC,
-                     " newText=", (void*)g_mNewText);
-        }
+        g_mAddBuff = g_parseVoidMethod ? g_parseVoidMethod(g_api->GetAPI<void*>({"Terraria", "Player", "AddBuff", "Method", 3})) : nullptr;
+        g_mGetSpawnX = g_parseIntMethod ? g_parseIntMethod(g_api->GetAPI<void*>({"Terraria", "Main", "get_spawnTileX", "Method", 0})) : nullptr;
+        g_mGetSpawnY = g_parseIntMethod ? g_parseIntMethod(g_api->GetAPI<void*>({"Terraria", "Main", "get_spawnTileY", "Method", 0})) : nullptr;
     }
 
     Metadata GetMetadata() override {
