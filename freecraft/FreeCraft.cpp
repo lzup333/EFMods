@@ -4,21 +4,28 @@
 //
 // 功能:
 //   1. 无需工作站: 所有配方的 requiredTile/needWater/needHoney/needLava/
-//      生物群系等前置条件全部被清除, 不再需要任何工作台/熔炉/砧台/液体/环境。
+//      生物群系等前置条件全部被清除, 不再需要任何工作台/熔炉/砧台/液体/环境;
+//      同时 Hook Recipe.SetCraftingFilter 为空操作, 让手机端合成界面的
+//      工作站过滤器(GUICrafting.UpdateFilter)始终处于"全部"状态。
 //   2. 无需对应材料: 所有配方的 requiredItemQuickLookup 被清空,
 //      材料检查恒为通过, 合成列表显示全部配方。
 //   3. 合成不消耗材料: Hook Recipe.GetIngredientsForOneCraft 并跳过原版,
 //      让本次要消耗的材料列表保持为空 -> 合成直接发放产物。
 //
-// 实现要点(结合 pe/dump.cs 与 pe/Assembly-CSharp 反编译桩):
+// 实现要点(结合 pe/dump.cs 反汇编):
 //   1. PE 端每次刷新合成界面都会调用 Recipe.FindRecipes(bool) 重建配方,
 //      部分情况推迟到下一帧由 Recipe.GetThroughDelayedFindRecipes() 执行。
-//      Hook 这两个入口: 在原始逻辑执行后, 直接把 Main.recipe 里所有配方
-//      的"工作站/液体/环境/材料"数据全部抹掉, 使任何后续条件检查都通过。
-//   2. 手机端合成界面 (GUICrafting) 不直接读 Main.availableRecipe,
-//      而是自行用 requiredTile/材料检查过滤配方; 因此必须在配方数据层面动手,
-//      仅填 Main.availableRecipe 是无效的。
-//   3. 字段/方法均做空指针保护, 解析失败时对应功能自动降级, 不会崩溃。
+//      Hook 这两个入口: 在原始逻辑执行后, 把 Main.recipe 里所有配方
+//      的"工作站/液体/环境/材料"数据全部抹掉。原版 FindRecipes 依次检查
+//      PlayerMeetsTileRequirements / PlayerMeetsEnvironmentConditions /
+//      CollectedEnoughItemsToCraft, 数据抹掉后三项恒为通过,
+//      原版会自然地(按配方下标顺序)把所有配方加入列表并正确维护 focusRecipe,
+//      因此【不可】再手动覆盖 Main.availableRecipe, 否则合成后选中项会跳变。
+//   2. 手机端合成界面 (GUICrafting) 的 UpdateFilter 按 requiredTile 是否等于
+//      当前工作站(TileFilter = AllowedRequiredTileIdsForFilter[0])过滤配方;
+//      SetCraftingFilter 空操作后过滤器始终为空 -> get_TileFilter 返回 -1 ->
+//      所有配方都被显示。
+//   3. 字段均做空指针保护, 解析失败时对应功能自动降级, 不会崩溃。
 //
 
 #include "efmod_core.hpp"
@@ -38,8 +45,6 @@ static TEFMod::Field<void*>*  (*ParseObjField)(void*);
 static TEFMod::Field<int>*    (*ParseIntField)(void*);
 static TEFMod::Field<bool>*   (*ParseBoolField)(void*);
 static TEFMod::Array<void*>*  (*ParseObjArray)(void*);
-static TEFMod::Method<void*>* (*ParseObjMethod)(void*);
-static TEFMod::Method<void>*  (*ParseVoidMethod)(void*);
 
 // 字段
 static TEFMod::Field<void*>* g_fMainRecipe;        // Main.recipe            (Recipe[], 静态字段)
@@ -54,10 +59,6 @@ static TEFMod::Field<bool>*  g_fRecipeNeedSnow;    // Recipe.needSnowBiome   (bo
 static TEFMod::Field<bool>*  g_fRecipeNeedGrave;   // Recipe.needGraveyardBiome (bool)
 static TEFMod::Field<bool>*  g_fRecipeNeedMech;    // Recipe.needMechdusa    (bool)
 static TEFMod::Field<void*>* g_fRecipeQuickLookup; // Recipe.requiredItemQuickLookup (RequiredItemEntry[])
-
-// 方法
-static TEFMod::Method<void*>* g_mGetAvailableRecipes;    // Main.get_availableRecipe()       -> int[]
-static TEFMod::Method<void>*  g_mSetNumAvailableRecipes; // Main.set_numAvailableRecipes(int)
 
 // 原始函数
 static void (*g_original_FindRecipes)(bool canDelayCheck);
@@ -211,34 +212,13 @@ static int PatchAllRecipes(TEFMod::Array<void*>* recipes) {
 }
 
 /**
- * 把所有有效配方灌入可用配方表
- * 手机端合成界面(GUICrafting)并不使用 Main.availableRecipe,
- * 但 PC 风格路径(若有)会用到; 这里一并填上, 双保险。
+ * 说明: 不再手动覆盖 Main.availableRecipe。
+ * 原版 Recipe.FindRecipes 会依次检查 PlayerMeetsTileRequirements /
+ * PlayerMeetsEnvironmentConditions / CollectedEnoughItemsToCraft,
+ * 而本 Mod 已把每个配方的 requiredTile / need 系列布尔字段 / 材料表全部清除,
+ * 这三项检查恒为通过, 原版会自然地(按配方下标顺序)把所有配方加入列表,
+ * 并正确维护 focusRecipe, 避免合成后选中项跳变。
  */
-static void UnlockAvailableList() {
-    if (!g_fMainRecipe || !g_fRecipeCreateItem || !g_fItemType) return;
-    if (!ParseObjArray || !g_mGetAvailableRecipes || !g_mSetNumAvailableRecipes) return;
-
-    TEFMod::Array<void*>* recipes = ParseObjArray(g_fMainRecipe->Get());
-    if (!recipes) return;
-
-    int* available = reinterpret_cast<int*>(g_mGetAvailableRecipes->Call(nullptr, 0));
-    if (!available) return;
-
-    const std::size_t total = recipes->Size();
-    int count = 0;
-    for (std::size_t i = 0; i < total; ++i) {
-        void* recipe = recipes->at(i);
-        if (!recipe) continue;
-
-        void* item = g_fRecipeCreateItem->Get(recipe);
-        if (!item) continue;
-        if (g_fItemType->Get(item) <= 0) continue;
-
-        available[count++] = static_cast<int>(i);
-    }
-    g_mSetNumAvailableRecipes->Call(nullptr, 1, count);
-}
 
 // 采样验证日志(只打一次)
 static bool g_verifiedOnce = false;
@@ -269,9 +249,8 @@ void Hook_FindRecipes(bool canDelayCheck) {
     TEFMod::Array<void*>* recipes = ParseObjArray ? ParseObjArray(g_fMainRecipe->Get()) : nullptr;
     if (!recipes) return;
 
-    const int valid = PatchAllRecipes(recipes);
+    PatchAllRecipes(recipes);
     VerifyPatch(recipes);
-    UnlockAvailableList();
 }
 
 void Hook_GetThroughDelayedFindRecipes() {
@@ -344,10 +323,6 @@ public:
         g_api->registerApiDescriptor({"Terraria", "Recipe", "needGraveyardBiome", "Field"});
         g_api->registerApiDescriptor({"Terraria", "Recipe", "needMechdusa", "Field"});
         g_api->registerApiDescriptor({"Terraria", "Recipe", "requiredItemQuickLookup", "Field"});
-
-        // 方法 (Main.availableRecipe / numAvailableRecipes 是自动属性, 走 getter/setter)
-        g_api->registerApiDescriptor({"Terraria", "Main", "get_availableRecipe", "Method", 0});
-        g_api->registerApiDescriptor({"Terraria", "Main", "set_numAvailableRecipes", "Method", 1});
     }
 
     void Receive(const std::string &path, MultiChannel* channel) override {
@@ -360,10 +335,6 @@ public:
                 "TEFMod::Field<Bool>::ParseFromPointer");
         ParseObjArray = channel->receive<TEFMod::Array<void*>*(*)(void*)>(
                 "TEFMod::Array<Other>::ParseFromPointer");
-        ParseObjMethod = channel->receive<TEFMod::Method<void*>*(*)(void*)>(
-                "TEFMod::Method<Other>::ParseFromPointer");
-        ParseVoidMethod = channel->receive<TEFMod::Method<void>*(*)(void*)>(
-                "TEFMod::Method<Void>::ParseFromPointer");
 
         // 原版函数
         g_original_FindRecipes = g_api->GetAPI<void(*)(bool)>({
@@ -393,17 +364,11 @@ public:
         g_fRecipeNeedMech = ParseBoolField(g_api->GetAPI<void*>({"Terraria", "Recipe", "needMechdusa", "Field"}));
         g_fRecipeQuickLookup = ParseObjField(g_api->GetAPI<void*>({"Terraria", "Recipe", "requiredItemQuickLookup", "Field"}));
 
-        // 方法
-        g_mGetAvailableRecipes = ParseObjMethod(g_api->GetAPI<void*>({"Terraria", "Main", "get_availableRecipe", "Method", 0}));
-        g_mSetNumAvailableRecipes = ParseVoidMethod(g_api->GetAPI<void*>({"Terraria", "Main", "set_numAvailableRecipes", "Method", 1}));
-
         if (g_log) {
             g_log->i("FreeCraft", "parsers: objF=", (void*)ParseObjField,
                      " intF=", (void*)ParseIntField,
                      " boolF=", (void*)ParseBoolField,
-                     " objArr=", (void*)ParseObjArray,
-                     " objM=", (void*)ParseObjMethod,
-                     " voidM=", (void*)ParseVoidMethod);
+                     " objArr=", (void*)ParseObjArray);
             g_log->i("FreeCraft", "orig: findRecipes=", (void*)g_original_FindRecipes,
                      " delayed=", (void*)g_original_GetThroughDelayedFindRecipes,
                      " ingredients=", (void*)g_original_GetIngredientsForOneCraft,
@@ -413,8 +378,6 @@ public:
                      " itemType=", (void*)g_fItemType,
                      " requiredTile=", (void*)g_fRecipeRequiredTile,
                      " quickLookup=", (void*)g_fRecipeQuickLookup);
-            g_log->i("FreeCraft", "methods: getAvail=", (void*)g_mGetAvailableRecipes,
-                     " setNumAvail=", (void*)g_mSetNumAvailableRecipes);
         }
     }
 
@@ -422,7 +385,7 @@ public:
         return {
                 "FreeCraft",  // Mod名称(英文标识)
                 "lzup",       // 作者
-                "1.0.0",      // 版本
+                "1.0.1",      // 版本
                 20250711,     // 标准规范(与经典EFMod API一致)
                 ModuleType::Game,
                 { false }
